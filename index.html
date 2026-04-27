@@ -57,6 +57,11 @@
         <source src="https://raw.githubusercontent.com/anars/blank-audio/master/10-seconds-of-silence.mp3" type="audio/mp3">
     </audio>
 
+    <!-- 久坐提醒音频 -->
+    <audio id="alertAudio">
+        <source src="https://ting9.yymp3.com/new11/liuruoying11/8.mp3" type="audio/mp3">
+    </audio>
+
     <script>
         let lastMoveTime = Date.now();
         let isRunning = false;
@@ -69,6 +74,7 @@
         const statusLabel = document.getElementById('status-label');
         const magValue    = document.getElementById('magnitude-value');
         const audio       = document.getElementById('silentAudio');
+        const alertAudio  = document.getElementById('alertAudio');
 
         function log(msg, isError = false) {
             const div = document.createElement('div');
@@ -177,6 +183,8 @@
                 statusLabel.textContent = '⚠️ 该起来动一动了！';
                 statusLabel.className = 'text-red-400';
                 log('⚠️ 久坐提醒：该起来活动了！', true);
+                alertAudio.currentTime = 0;
+                alertAudio.play().catch(e => log('音频播放失败: ' + e.message, true));
                 if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
             }
 
