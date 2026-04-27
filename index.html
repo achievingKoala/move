@@ -3,42 +3,56 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anti-Sedentary Hack</title>
+    <title>防久坐提醒</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-green-400 p-5 font-mono">
 
-    <h1 class="text-xl mb-4 text-white border-b border-green-800 pb-2 shadow-sm">LEVELS_MODE: ANTI-SEDENTARY v1.0</h1>
+    <h1 class="text-xl mb-4 text-white border-b border-green-800 pb-2">防久坐提醒</h1>
 
-    <div id="debug-box" class="bg-black p-3 border border-green-900 h-40 overflow-y-auto text-xs mb-4 shadow-inner">
-        <div>[SYSTEM] Waiting for start...</div>
+    <!-- 调试框：活动量 + 错误信息 -->
+    <div class="mb-4">
+        <div class="flex justify-between text-xs mb-1">
+            <span class="text-green-600 uppercase">活动量 (Magnitude)</span>
+            <span id="magnitude-value" class="text-yellow-400 font-bold">—</span>
+        </div>
+        <div id="debug-box" class="bg-black p-3 border border-green-900 h-32 overflow-y-auto text-xs">
+            <div class="text-gray-500">[SYSTEM] 等待启动...</div>
+        </div>
     </div>
 
+    <!-- 设置 -->
     <div class="grid grid-cols-2 gap-4 mb-4">
         <div>
-            <label class="block text-xs uppercase">Reminder (Min)</label>
-            <input type="number" id="limit" value="45" class="bg-gray-800 border border-green-900 w-full p-2">
+            <label class="block text-xs uppercase mb-1">久坐提醒时间（分钟）</label>
+            <input type="number" id="limit" value="45" min="1"
+                class="bg-gray-800 border border-green-900 w-full p-2 text-white">
         </div>
         <div>
-            <label class="block text-xs uppercase">Sensitivity</label>
-            <input type="number" id="sens" value="12" class="bg-gray-800 border border-green-900 w-full p-2">
+            <label class="block text-xs uppercase mb-1">灵敏度（阈值）</label>
+            <input type="number" id="sens" value="1.5" step="0.1" min="0.1"
+                class="bg-gray-800 border border-green-900 w-full p-2 text-white">
         </div>
     </div>
 
+    <!-- 倒计时进度条 -->
     <div class="mb-6">
         <div class="flex justify-between text-xs mb-1">
-            <span>STILLNESS COUNTDOWN</span>
-            <span id="timer-label">00:00</span>
+            <span id="status-label" class="text-green-400">静止倒计时中</span>
+            <span id="timer-label">--:--</span>
         </div>
-        <div class="w-full bg-gray-800 h-4">
-            <div id="progress" class="bg-green-500 h-4 transition-all duration-1000" style="width: 100%"></div>
+        <div class="w-full bg-gray-800 h-5 rounded">
+            <div id="progress" class="bg-green-500 h-5 rounded transition-all duration-500" style="width: 100%"></div>
         </div>
     </div>
 
-    <button id="startBtn" class="w-full bg-green-600 text-black font-bold py-4 hover:bg-green-400 shadow-lg active:transform active:scale-95 transition-all">
-        START SESSION (ENABLE AUDIO)
+    <!-- 开始按钮 -->
+    <button id="startBtn"
+        class="w-full bg-green-600 text-black font-bold py-4 rounded hover:bg-green-400 active:scale-95 transition-all">
+        开始（授权传感器 + 音频）
     </button>
 
+    <!-- 静音音频，保持后台运行 -->
     <audio id="silentAudio" loop>
         <source src="https://raw.githubusercontent.com/anars/blank-audio/master/10-seconds-of-silence.mp3" type="audio/mp3">
     </audio>
@@ -46,70 +60,124 @@
     <script>
         let lastMoveTime = Date.now();
         let isRunning = false;
-        const debugBox = document.getElementById('debug-box');
-        const progress = document.getElementById('progress');
-        const audio = document.getElementById('silentAudio');
+        let alerted = false;         // 防止重复触发提醒
+        let lastLogMove = 0;         // 限制 Moving 日志频率
+
+        const debugBox    = document.getElementById('debug-box');
+        const progress    = document.getElementById('progress');
+        const timerLabel  = document.getElementById('timer-label');
+        const statusLabel = document.getElementById('status-label');
+        const magValue    = document.getElementById('magnitude-value');
+        const audio       = document.getElementById('silentAudio');
 
         function log(msg, isError = false) {
             const div = document.createElement('div');
             div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            if (isError) div.className = 'text-red-500';
+            if (isError) div.className = 'text-red-400';
             debugBox.prepend(div);
         }
 
+        // ── 开始按钮 ──────────────────────────────────────────
         document.getElementById('startBtn').onclick = async () => {
             try {
-                // 必须在点击事件中触发音频和权限
                 await audio.play();
-                
-                if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                    const permission = await DeviceMotionEvent.requestPermission();
-                    if (permission !== 'granted') throw new Error('Permission denied');
+
+                if (typeof DeviceMotionEvent !== 'undefined' &&
+                    typeof DeviceMotionEvent.requestPermission === 'function') {
+                    const perm = await DeviceMotionEvent.requestPermission();
+                    if (perm !== 'granted') throw new Error('传感器权限被拒绝');
+                }
+
+                if (typeof DeviceMotionEvent === 'undefined') {
+                    log('⚠️ 当前设备/浏览器不支持 DeviceMotion（需手机）', true);
+                } else {
+                    log('✅ 传感器已启动，开始监测...');
                 }
 
                 isRunning = true;
+                alerted = false;
                 lastMoveTime = Date.now();
-                log("Session Started. Audio playing in background.");
-                
+
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('startBtn').textContent = '运行中...';
+                document.getElementById('startBtn').classList.replace('bg-green-600', 'bg-gray-600');
+
                 window.addEventListener('devicemotion', handleMotion);
-                updateLoop();
+                requestAnimationFrame(updateLoop);
             } catch (e) {
                 log(e.message, true);
             }
         };
 
+        // ── 传感器处理 ────────────────────────────────────────
         function handleMotion(event) {
-            const acc = event.accelerationIncludingGravity;
+            // 优先用不含重力的加速度，静止时接近 0
+            let acc = event.acceleration;
+            let withGravity = false;
+
+            if (!acc || acc.x === null) {
+                acc = event.accelerationIncludingGravity;
+                withGravity = true;
+            }
             if (!acc) return;
-            
-            const magnitude = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+
+            const magnitude = Math.sqrt((acc.x||0)**2 + (acc.y||0)**2 + (acc.z||0)**2);
+            magValue.innerText = magnitude.toFixed(3) + (withGravity ? ' (含重力)' : '');
+
             const threshold = parseFloat(document.getElementById('sens').value);
 
-            // 如果活动量超过阈值，重置时间
             if (magnitude > threshold) {
                 lastMoveTime = Date.now();
-                // log(`Moving: ${magnitude.toFixed(2)}`);
+                alerted = false; // 动了之后重置提醒状态
+
+                // 限制日志：每 3 秒最多一条
+                const now = Date.now();
+                if (now - lastLogMove > 3000) {
+                    log(`活动中 magnitude=${magnitude.toFixed(2)}`);
+                    lastLogMove = now;
+                }
             }
         }
 
+        // ── 倒计时循环 ────────────────────────────────────────
         function updateLoop() {
             if (!isRunning) return;
 
             const limitMs = parseFloat(document.getElementById('limit').value) * 60 * 1000;
-            const elapsed = Date.now() - lastMoveTime;
+            const elapsed  = Date.now() - lastMoveTime;
             const remaining = Math.max(0, limitMs - elapsed);
-            
-            const percent = (remaining / limitMs) * 100;
-            progress.style.width = `${percent}%`;
-            
-            const secs = Math.ceil(remaining / 1000);
-            document.getElementById('timer-label').innerText = `${Math.floor(secs/60)}:${(secs%60).toString().padStart(2, '0')}`;
+            const percent   = (remaining / limitMs) * 100;
 
-            if (remaining <= 0) {
-                log("!!! TIME TO STAND UP !!!", true);
-                // 震动提醒（如果设备支持）
-                if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
-                // 这里可以播放一个报警音
+            // 进度条颜色：剩余越少越红
+            progress.style.width = `${percent}%`;
+            if (percent > 50) {
+                progress.className = 'bg-green-500 h-5 rounded transition-all duration-500';
+            } else if (percent > 20) {
+                progress.className = 'bg-yellow-400 h-5 rounded transition-all duration-500';
+            } else {
+                progress.className = 'bg-red-500 h-5 rounded transition-all duration-500';
+            }
+
+            // 时间显示
+            const secs = Math.ceil(remaining / 1000);
+            timerLabel.innerText = `${Math.floor(secs / 60).toString().padStart(2,'0')}:${(secs % 60).toString().padStart(2,'0')}`;
+
+            // 状态文字
+            if (elapsed < 5000) {
+                statusLabel.textContent = '检测到活动，倒计时已重置';
+                statusLabel.className = 'text-green-400';
+            } else if (remaining > 0) {
+                statusLabel.textContent = '静止倒计时中...';
+                statusLabel.className = 'text-yellow-400';
+            }
+
+            // 归零提醒（只触发一次，直到下次活动）
+            if (remaining <= 0 && !alerted) {
+                alerted = true;
+                statusLabel.textContent = '⚠️ 该起来动一动了！';
+                statusLabel.className = 'text-red-400';
+                log('⚠️ 久坐提醒：该起来活动了！', true);
+                if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
             }
 
             requestAnimationFrame(updateLoop);
