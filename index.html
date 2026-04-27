@@ -52,6 +52,13 @@
         开始（授权传感器 + 音频）
     </button>
 
+    <!-- 测试系统通知 -->
+    <button id="testNotifyBtn"
+        class="w-full mt-3 bg-gray-700 text-green-400 font-bold py-3 rounded border border-green-800 hover:bg-gray-600 active:scale-95 transition-all text-sm">
+        🔔 测试系统通知
+    </button>
+    <div id="notify-status" class="text-xs text-gray-500 mt-1 text-center"></div>
+
     <!-- 静音音频，保持后台运行 -->
     <audio id="silentAudio" loop>
         <source src="https://raw.githubusercontent.com/anars/blank-audio/master/10-seconds-of-silence.mp3" type="audio/mp3">
@@ -82,6 +89,36 @@
             if (isError) div.className = 'text-red-400';
             debugBox.prepend(div);
         }
+
+        // ── 测试系统通知 ──────────────────────────────────────
+        document.getElementById('testNotifyBtn').onclick = async () => {
+            const statusEl = document.getElementById('notify-status');
+
+            if (!('Notification' in window)) {
+                statusEl.textContent = '❌ 当前浏览器不支持系统通知';
+                statusEl.className = 'text-xs text-red-400 mt-1 text-center';
+                return;
+            }
+
+            let perm = Notification.permission;
+            if (perm === 'default') {
+                perm = await Notification.requestPermission();
+            }
+
+            if (perm === 'denied') {
+                statusEl.textContent = '❌ 通知权限被拒绝，请在浏览器设置中手动开启';
+                statusEl.className = 'text-xs text-red-400 mt-1 text-center';
+                return;
+            }
+
+            new Notification('久坐提醒 🚶', {
+                body: '该起来走一走了！这是一条测试通知。',
+                icon: 'https://cdn.jsdelivr.net/npm/twemoji@14/assets/72x72/1f9e0.png',
+            });
+
+            statusEl.textContent = '✅ 通知已发送，检查你的系统通知栏';
+            statusEl.className = 'text-xs text-green-400 mt-1 text-center';
+        };
 
         // ── 开始按钮 ──────────────────────────────────────────
         document.getElementById('startBtn').onclick = async () => {
