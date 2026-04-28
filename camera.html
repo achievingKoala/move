@@ -25,6 +25,17 @@
         <p class="text-gray-400">100% 本地运行 • 保护隐私 • 毫秒级检测</p>
     </div>
 
+    <!-- 外层：左侧时间轴 + 右侧视频 -->
+    <div class="flex gap-6 items-start">
+
+    <!-- 左侧时间轴 -->
+    <div class="glass rounded-2xl p-4 w-52 min-h-[480px] flex flex-col">
+        <p class="text-[10px] text-zinc-500 uppercase font-bold mb-3 tracking-wider">在场记录</p>
+        <div id="timeline" class="flex-1 overflow-y-auto space-y-0 text-xs">
+            <p class="text-zinc-600 italic">尚无记录</p>
+        </div>
+    </div>
+
     <!-- 主容器 -->
     <div class="relative group">
         <!-- 视频主体 -->
@@ -64,6 +75,8 @@
         <div class="absolute -inset-1 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-3xl blur opacity-10 group-hover:opacity-20 transition duration-1000"></div>
     </div>
 
+    </div><!-- end flex wrapper -->
+
     <!-- 底部操作区 -->
     <div class="mt-10 flex gap-4">
         <button id="startBtn" class="bg-white text-black px-8 py-3 rounded-xl font-bold hover:scale-105 active:scale-95 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
@@ -94,11 +107,69 @@
 
         // 久坐提醒：人脸持续在场计时
         let faceFirstSeenTime = null; // 人脸首次出现的时间戳
-        const PRESENCE_ALERT_MS = 10 * 1000; // 10 秒
+        const PRESENCE_ALERT_MS = 60 * 1000; // 10 秒
         let alertPlayed = false; // 防止重复播放
 
         const alertAudio = new Audio('https://ting9.yymp3.com/new11/liuruoying11/8.mp3');
         const countdownText = document.getElementById('countdownText');
+        const timeline = document.getElementById('timeline');
+
+        // ── 时间轴记录 ────────────────────────────────────────
+        let timelineRecords = []; // { arriveTime, leaveTime|null }
+
+        function timeStr(ts) {
+            return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function renderTimeline() {
+            timeline.innerHTML = '';
+            if (timelineRecords.length === 0) {
+                timeline.innerHTML = '<p class="text-zinc-600 italic">尚无记录</p>';
+                return;
+            }
+            // 最新的在最上面
+            [...timelineRecords].reverse().forEach((rec, i) => {
+                const isActive = rec.leaveTime === null;
+                const dot = document.createElement('div');
+                dot.className = 'flex gap-2 items-start mb-3';
+                dot.innerHTML = `
+                    <div class="flex flex-col items-center pt-1">
+                        <div class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-400' : 'bg-zinc-500'}"></div>
+                        ${!isActive ? '<div class="w-px flex-1 bg-zinc-700 mt-1" style="min-height:28px"></div>' : ''}
+                    </div>
+                    <div class="leading-snug">
+                        <p class="text-green-400 font-mono">▶ ${timeStr(rec.arriveTime)}</p>
+                        ${isActive
+                            ? '<p class="text-yellow-400 text-[10px] mt-0.5">在场中...</p>'
+                            : `<p class="text-red-400 font-mono">◀ ${timeStr(rec.leaveTime)}</p>
+                               <p class="text-zinc-500 text-[10px] mt-0.5">时长 ${durationStr(rec.arriveTime, rec.leaveTime)}</p>`
+                        }
+                    </div>`;
+                timeline.appendChild(dot);
+            });
+        }
+
+        function durationStr(start, end) {
+            const s = Math.round((end - start) / 1000);
+            if (s < 60) return s + '秒';
+            return Math.floor(s / 60) + '分' + (s % 60) + '秒';
+        }
+
+        function onFaceArrived() {
+            // 只有上一条已关闭（或没有记录）才新建
+            if (timelineRecords.length === 0 || timelineRecords[timelineRecords.length - 1].leaveTime !== null) {
+                timelineRecords.push({ arriveTime: Date.now(), leaveTime: null });
+                renderTimeline();
+            }
+        }
+
+        function onFaceLeft() {
+            const last = timelineRecords[timelineRecords.length - 1];
+            if (last && last.leaveTime === null) {
+                last.leaveTime = Date.now();
+                renderTimeline();
+            }
+        }
 
         // 每秒刷新倒计时显示
         setInterval(() => {
@@ -188,6 +259,7 @@
                     if (faceFirstSeenTime === null) {
                         faceFirstSeenTime = Date.now();
                         alertPlayed = false;
+                        onFaceArrived(); // 时间轴：到达
                     }
 
                     // 持续在场超过阈值，播放音乐（只播一次）
@@ -204,6 +276,7 @@
                     if (absenceCounter >= ABSENCE_THRESHOLD) {
                         updateUI(false, "0.0");
                         // 人离开后重置计时，下次回来重新计
+                        onFaceLeft(); // 时间轴：离开
                         faceFirstSeenTime = null;
                         alertPlayed = false;
                         alertAudio.pause();
