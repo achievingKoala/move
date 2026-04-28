@@ -47,7 +47,7 @@
     </div>
 
     <!-- 活动验证进度条 -->
-    <div class="mb-6">
+    <div class="mb-4">
         <div class="flex justify-between text-xs mb-1">
             <span class="text-green-600 uppercase">活动验证</span>
             <span id="activity-label" class="text-gray-500">等待活动...</span>
@@ -58,6 +58,25 @@
         <div class="flex justify-between text-xs mt-1 text-gray-600">
             <span>持续时间 <span id="act-duration">0</span>s / 10s</span>
             <span>峰值次数 <span id="act-peaks">0</span> / 15</span>
+        </div>
+    </div>
+
+    <!-- 今日有效活动总量 -->
+    <div class="mb-6 border border-green-900 rounded p-3 bg-gray-800 bg-opacity-40">
+        <div class="flex justify-between text-xs mb-1">
+            <span class="text-green-600 uppercase">今日有效活动</span>
+            <span class="text-gray-500 text-xs">目标
+                <input type="number" id="daily-goal" value="8" min="1" max="50"
+                    class="bg-transparent border-b border-green-800 w-8 text-center text-white focus:outline-none">
+                次
+            </span>
+        </div>
+        <div class="w-full bg-gray-700 h-4 rounded overflow-hidden">
+            <div id="total-bar" class="bg-emerald-500 h-4 rounded transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-xs mt-1 text-gray-500">
+            <span>已完成 <span id="total-count" class="text-white font-bold">0</span> 次</span>
+            <span>累计活动 <span id="total-time" class="text-white font-bold">0</span> 分钟</span>
         </div>
     </div>
 
@@ -111,6 +130,13 @@
         const actLabel    = document.getElementById('activity-label');
         const actDuration = document.getElementById('act-duration');
         const actPeaks    = document.getElementById('act-peaks');
+        const totalBar    = document.getElementById('total-bar');
+        const totalCount  = document.getElementById('total-count');
+        const totalTime   = document.getElementById('total-time');
+
+        // ── 今日有效活动累计 ──────────────────────────────────
+        let dailySessionCount   = 0;   // 验证通过次数
+        let dailyActiveMs       = 0;   // 累计有效活动毫秒数
 
         function log(msg, isError = false) {
             const div = document.createElement('div');
@@ -236,7 +262,12 @@
                     // 验证通过！重置久坐计时
                     lastMoveTime = now;
                     alerted = false;
-                    log(`✅ 活动验证通过！持续 ${(duration/1000).toFixed(1)}s，峰值 ${peakCount} 次`);
+                    
+                    // 累计今日活动量
+                    dailySessionCount++;
+                    dailyActiveMs += duration;
+                    
+                    log(`✅ 活动验证通过！持续 ${(duration/1000).toFixed(1)}s，峰值 ${peakCount} 次 | 今日第 ${dailySessionCount} 次`);
                     resetActivityWindow();
                 }
             }
@@ -308,6 +339,16 @@
                 actLabel.textContent    = elapsed < 3000 ? '✅ 验证通过' : '等待活动...';
                 actLabel.className      = elapsed < 3000 ? 'text-green-400' : 'text-gray-500';
             }
+
+            // ── 今日有效活动总量进度条 ────────────────────────
+            const dailyGoal     = Math.max(1, parseInt(document.getElementById('daily-goal').value) || 8);
+            const totalPercent  = Math.min((dailySessionCount / dailyGoal) * 100, 100);
+            totalBar.style.width = `${totalPercent}%`;
+            totalBar.className = totalPercent >= 100
+                ? 'bg-yellow-400 h-4 rounded transition-all duration-500'
+                : 'bg-emerald-500 h-4 rounded transition-all duration-500';
+            totalCount.textContent = `${dailySessionCount} / ${dailyGoal}`;
+            totalTime.textContent  = (dailyActiveMs / 60000).toFixed(1);
 
             // 归零提醒（只触发一次，直到下次活动）
             if (remaining <= 0 && !alerted) {
