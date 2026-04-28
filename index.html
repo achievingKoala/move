@@ -36,13 +36,28 @@
     </div>
 
     <!-- 倒计时进度条 -->
-    <div class="mb-6">
+    <div class="mb-4">
         <div class="flex justify-between text-xs mb-1">
             <span id="status-label" class="text-green-400">静止倒计时中</span>
             <span id="timer-label">--:--</span>
         </div>
         <div class="w-full bg-gray-800 h-5 rounded">
             <div id="progress" class="bg-green-500 h-5 rounded transition-all duration-500" style="width: 100%"></div>
+        </div>
+    </div>
+
+    <!-- 活动验证进度条 -->
+    <div class="mb-6">
+        <div class="flex justify-between text-xs mb-1">
+            <span class="text-green-600 uppercase">活动验证</span>
+            <span id="activity-label" class="text-gray-500">等待活动...</span>
+        </div>
+        <div class="w-full bg-gray-800 h-3 rounded overflow-hidden">
+            <div id="activity-bar" class="bg-blue-500 h-3 rounded transition-all duration-200" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-xs mt-1 text-gray-600">
+            <span>持续时间 <span id="act-duration">0</span>s / 10s</span>
+            <span>峰值次数 <span id="act-peaks">0</span> / 15</span>
         </div>
     </div>
 
@@ -72,8 +87,18 @@
     <script>
         let lastMoveTime = Date.now();
         let isRunning = false;
-        let alerted = false;         // 防止重复触发提醒
-        let lastLogMove = 0;         // 限制 Moving 日志频率
+        let alerted = false;
+        let lastLogMove = 0;
+
+        // ── 活动验证状态 ──────────────────────────────────────
+        const REQUIRED_DURATION = 10000; // 持续活动 10 秒
+        const REQUIRED_PEAKS    = 15;    // 期间峰值次数
+        const PEAK_MIN_INTERVAL = 350;   // 两次峰值最小间隔 ms
+
+        let activityStartTime = 0;   // 本轮活动开始时间
+        let peakCount         = 0;   // 本轮峰值计数
+        let lastPeakTime      = 0;   // 上次峰值时间
+        let inActivity        = false; // 当前是否处于活动窗口
 
         const debugBox    = document.getElementById('debug-box');
         const progress    = document.getElementById('progress');
@@ -82,6 +107,10 @@
         const magValue    = document.getElementById('magnitude-value');
         const audio       = document.getElementById('silentAudio');
         const alertAudio  = document.getElementById('alertAudio');
+        const activityBar = document.getElementById('activity-bar');
+        const actLabel    = document.getElementById('activity-label');
+        const actDuration = document.getElementById('act-duration');
+        const actPeaks    = document.getElementById('act-peaks');
 
         function log(msg, isError = false) {
             const div = document.createElement('div');
@@ -154,7 +183,6 @@
 
         // ── 传感器处理 ────────────────────────────────────────
         function handleMotion(event) {
-            // 优先用不含重力的加速度，静止时接近 0
             let acc = event.acceleration;
             let withGravity = false;
 
@@ -168,30 +196,68 @@
             magValue.innerText = magnitude.toFixed(3) + (withGravity ? ' (含重力)' : '');
 
             const threshold = parseFloat(document.getElementById('sens').value);
+            const now = Date.now();
 
             if (magnitude > threshold) {
-                lastMoveTime = Date.now();
-                alerted = false; // 动了之后重置提醒状态
+                // ── 峰值检测（限制最小间隔，避免同一次抖动重复计数）
+                if (now - lastPeakTime > PEAK_MIN_INTERVAL) {
+                    lastPeakTime = now;
 
-                // 限制日志：每 3 秒最多一条
-                const now = Date.now();
+                    if (!inActivity) {
+                        // 开启新一轮活动窗口
+                        inActivity = true;
+                        activityStartTime = now;
+                        peakCount = 1;
+                        log('活动开始，开始验证...');
+                    } else {
+                        peakCount++;
+                    }
+                }
+
+                // 限制日志频率
                 if (now - lastLogMove > 3000) {
-                    log(`活动中 magnitude=${magnitude.toFixed(2)}`);
+                    log(`活动中 magnitude=${magnitude.toFixed(2)} peaks=${peakCount}`);
                     lastLogMove = now;
                 }
+            } else if (inActivity) {
+                // 超过 2 秒没有峰值，视为活动中断，重置本轮
+                if (now - lastPeakTime > 2000) {
+                    resetActivityWindow();
+                }
             }
+
+            // ── 判断是否满足验证条件
+            if (inActivity) {
+                const duration = now - activityStartTime;
+                const durationOk = duration >= REQUIRED_DURATION;
+                const peaksOk    = peakCount >= REQUIRED_PEAKS;
+
+                if (durationOk && peaksOk) {
+                    // 验证通过！重置久坐计时
+                    lastMoveTime = now;
+                    alerted = false;
+                    log(`✅ 活动验证通过！持续 ${(duration/1000).toFixed(1)}s，峰值 ${peakCount} 次`);
+                    resetActivityWindow();
+                }
+            }
+        }
+
+        function resetActivityWindow() {
+            inActivity = false;
+            activityStartTime = 0;
+            peakCount = 0;
         }
 
         // ── 倒计时循环 ────────────────────────────────────────
         function updateLoop() {
             if (!isRunning) return;
 
-            const limitMs = parseFloat(document.getElementById('limit').value) * 60 * 1000;
-            const elapsed  = Date.now() - lastMoveTime;
+            const limitMs   = parseFloat(document.getElementById('limit').value) * 60 * 1000;
+            const elapsed   = Date.now() - lastMoveTime;
             const remaining = Math.max(0, limitMs - elapsed);
             const percent   = (remaining / limitMs) * 100;
 
-            // 进度条颜色：剩余越少越红
+            // 久坐进度条
             progress.style.width = `${percent}%`;
             if (percent > 50) {
                 progress.className = 'bg-green-500 h-5 rounded transition-all duration-500';
@@ -206,12 +272,41 @@
             timerLabel.innerText = `${Math.floor(secs / 60).toString().padStart(2,'0')}:${(secs % 60).toString().padStart(2,'0')}`;
 
             // 状态文字
-            if (elapsed < 5000) {
-                statusLabel.textContent = '检测到活动，倒计时已重置';
+            if (elapsed < 3000) {
+                statusLabel.textContent = '✅ 活动验证通过，倒计时已重置';
                 statusLabel.className = 'text-green-400';
             } else if (remaining > 0) {
                 statusLabel.textContent = '静止倒计时中...';
                 statusLabel.className = 'text-yellow-400';
+            }
+
+            // ── 活动验证进度条 ────────────────────────────────
+            if (inActivity) {
+                const duration    = Date.now() - activityStartTime;
+                const durPercent  = Math.min((duration / REQUIRED_DURATION) * 100, 100);
+                const peakPercent = Math.min((peakCount / REQUIRED_PEAKS) * 100, 100);
+                // 取两者中较低的作为整体进度（两个条件都要满足）
+                const actPercent  = Math.min(durPercent, peakPercent);
+
+                activityBar.style.width = `${actPercent}%`;
+                activityBar.className = actPercent >= 100
+                    ? 'bg-green-400 h-3 rounded transition-all duration-200'
+                    : 'bg-blue-500 h-3 rounded transition-all duration-200';
+
+                actDuration.textContent = (duration / 1000).toFixed(1);
+                actPeaks.textContent    = peakCount;
+                actLabel.textContent    = '验证中...';
+                actLabel.className      = 'text-blue-400';
+            } else {
+                // 没有活动时，进度条缓慢归零
+                const curWidth = parseFloat(activityBar.style.width) || 0;
+                if (curWidth > 0) {
+                    activityBar.style.width = `${Math.max(0, curWidth - 2)}%`;
+                }
+                actDuration.textContent = '0';
+                actPeaks.textContent    = '0';
+                actLabel.textContent    = elapsed < 3000 ? '✅ 验证通过' : '等待活动...';
+                actLabel.className      = elapsed < 3000 ? 'text-green-400' : 'text-gray-500';
             }
 
             // 归零提醒（只触发一次，直到下次活动）
